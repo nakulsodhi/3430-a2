@@ -8,7 +8,10 @@
 CC = clang
 CFLAGS = -Wall -Werror -Wextra -Wpedantic -g -D_FORTIFY_SOURCE=3
 
-ifndef BUILD_FAST
+# run 
+# 	make WITH_SANITIZER=1
+# to turn off the address sanitizer and stack protection.
+ifdef WITH_SANITIZER
 	CFLAGS += -fsanitize=address -fstack-protector-all 
 endif
 
