@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define MAX_OPEN_FILES     16
+#define MAX_OPEN_FILES     1024
 #define NQP_FILE_NOT_FOUND -1
 
 typedef enum NQP_FS_TYPE
