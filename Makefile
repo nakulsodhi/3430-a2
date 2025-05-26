@@ -6,7 +6,7 @@
 # to copy and use this Makefile for their own work.
 
 CC = clang
-CFLAGS = -Wall -Werror -Wextra -Wpedantic -g -D_FORTIFY_SOURCE=3
+CFLAGS = -Wall -Werror -Wextra -Wpedantic -g 
 
 # run 
 # 	make WITH_SANITIZER=1
