@@ -8,71 +8,164 @@
 #include "nqp_shell.h"
 #include "nqp_io.h"
 
+path_t cwd;
 
-char cwd[MAX_LINE_SIZE];
+char* stack_join(path_t* path)
+{
+    char* path_ret;
+    int pathsize = 1;
 
-char* relative_path_to_absolute(char* dir){
+    if (path->top == -1) return "/";
+
+    for (int i = 0; i <= path->top; i++)
+    {
+
+        pathsize += strlen(path->stack[i]) + 1;
+    }
+
+    path_ret = calloc(pathsize, sizeof(char));
+
+    strcpy(path_ret, "/");
+
+    for (int i = 0; i <= path->top; i++)
+    {
+        strcat(path_ret, path->stack[i]);
+        strcat(path_ret, "/");
+    }
+
+    return path_ret;
+}
+
+char* path_join_parent(path_t* path)
+{
+    char* path_ret;
+    int pathsize = 1;
+
+    if ((path->top == -1) || (path->top == 0)) return "/";
+
+    for (int i = 0; i <= path->top - 1; i++)
+    {
+
+        pathsize += strlen(path->stack[i]) + 1;
+    }
+
+    path_ret = calloc(pathsize, sizeof(char));
+
+    strcpy(path_ret, "/");
+
+    for (int i = 0; i <= path->top - 1; i++)
+    {
+        strcat(path_ret, path->stack[i]);
+        strcat(path_ret, "/");
+    }
+
+    return path_ret;
+}
+
+void stack_push(path_t* path, char* token)
+{
+    path->top++;
+    path->stack[path->top] = token;
+
+}
+
+char* stack_pop(path_t* path)
+{
+    return path->stack[path->top--];
+}
+
+
+void stack_clear(path_t* path)
+{
+    if (path->top == -1) return;
+    while (path->top > -1)
+    {
+        free(path->stack[path->top]);
+        path->top --;
+    }
+}
+
+
+path_t* relative_path_to_absolute(char* dir){
 
     /* Still doesn't handle the case where the path is a relative path starting with .. or . */
 
 
-        if (dir[1] == '/')      /* Absolute path */
+        if (dir[0] == '/')      /* Absolute path */
         {
-            return dir;
+            path_t* tmp = malloc(sizeof(path_t));
+            tmp->top = -1;
+
+            int count = 0;
+            char** abs_path_tokens = split_str(dir, '/', &count);
+
+            for (int i = 0; i < count; i++)
+            {
+                stack_push(tmp, abs_path_tokens[i]);
+            }
+            return tmp;
         }
         else if (strcmp(dir, "..") == 0)  /* Parent path */
         {
-            return get_parent_path(dir);
+            path_t* tmp = malloc(sizeof(path_t));
+            memcpy(tmp, &cwd, sizeof(path_t));
+            stack_pop(tmp);
+            return tmp;
         }
         else if (strcmp(dir, ".") == 0)
         {
-            return cwd;
+            return &cwd;
         }
         else                    /* Relative path */
         {
-            char* concat_path = calloc(strlen(cwd) + strlen(dir) + 1, sizeof(char));
+            int count = 0;
+            char** abs_path_tokens = split_str(dir, '/', &count);
 
-            strcpy(concat_path, cwd);
-            strcat(concat_path, dir);
+            path_t* tmp = malloc(sizeof(path_t));
+            memcpy(tmp, &cwd, sizeof(path_t));
+            for (int i = 0; i < count; i++)
+            {
+                stack_push(tmp, abs_path_tokens[i]);
+            }
 
-            return concat_path;
+
+            return tmp;
         }
 }
 
 
 
-char* get_parent_path(char* path)
-{
-    if (strcmp(path, "/") == 0) {
-        return path;
-    }
+/* char* get_parent_path(char* path) */
+/* { */
+/*     if (strcmp(path, "/") == 0) { */
+/*         return path; */
+/*     } */
 
-    int depth = 0;
-    char** cwd_split = split_str(cwd, '/', &depth);
+/*     int depth = 0; */
 
-    if (depth == 1)             /* The parent is root */
-    {
-        return "/";
+/*     if (depth == 1)             /\* The parent is root *\/ */
+/*     { */
+/*         return "/"; */
 
-    }
-    int path_length = depth * sizeof(char);
-    for (int i = 0; i < depth - 1; i++)
-    {
-        path_length += strlen(cwd_split[i]);
+/*     } */
+/*     int path_length = depth * sizeof(char); */
+/*     for (int i = 0; i < depth - 1; i++) */
+/*     { */
+/*         path_length += strlen(stack[i]); */
 
-    }
-    char* parent_path = calloc(path_length, sizeof(char));
-    int idx = 0;
-    for (int i = 0; i < depth - 1; i++)
-    {
-        strcpy((parent_path + idx++), "/");
-        strcpy((parent_path + idx), cwd_split[i]);
-        idx += strlen(cwd_split[i]);
-    }
+/*     } */
+/*     char* parent_path = calloc(path_length, sizeof(char)); */
+/*     int idx = 0; */
+/*     for (int i = 0; i < depth - 1; i++) */
+/*     { */
+/*         strcpy((parent_path + idx++), "/"); */
+/*         strcpy((parent_path + idx), cwd_split[i]); */
+/*         idx += strlen(cwd_split[i]); */
+/*     } */
 
 
-    return parent_path;
-}
+/*     return parent_path; */
+/* } */
 
 char** split_str(char* str, const char delim, int* len)
 {
@@ -101,7 +194,6 @@ char** split_str(char* str, const char delim, int* len)
     {
         *len = *len + 1;
         *(ret + str_idx++) = strdup(subtoken);
-        printf("token:%s\n", subtoken);
 
     }
 
@@ -112,7 +204,7 @@ char** split_str(char* str, const char delim, int* len)
 
 int pwd(void)
 {
-    printf("%s \n", cwd);
+    printf("%s \n", stack_join(&cwd));
     return 0;
 }
 
@@ -125,23 +217,23 @@ int ls(char* dir)
 
     if (dir != NULL)
     {
-        if (dir[1] == '/')      /* Absolute path */
+        if (dir[0] == '/')      /* Absolute path */
         {
             target_fd = nqp_open(dir);
         }
         else if (strcmp(dir, "..") == 0)  /* Parent path */
         {
-            target_fd = nqp_open(get_parent_path(dir));
+            target_fd = nqp_open(path_join_parent(&cwd));
         }
         else if (strcmp(dir, ".") == 0)
         {
-            target_fd = nqp_open(cwd);
+            target_fd = nqp_open(stack_join(&cwd));
         }
         else                    /* Relative path */
         {
-            char concat_path[strlen(cwd) + strlen(dir) + 1];
+            char concat_path[strlen(stack_join(&cwd)) + strlen(dir) + 1];
 
-            strcpy(concat_path, cwd);
+            strcpy(concat_path, stack_join(&cwd));
             strcat(concat_path, dir);
 
             target_fd = nqp_open(concat_path);
@@ -151,7 +243,7 @@ int ls(char* dir)
     }
     else
     {
-        target_fd = nqp_open(cwd);
+        target_fd = nqp_open(stack_join(&cwd));
     }
     if (target_fd < 0)
     {
@@ -178,36 +270,37 @@ int ls(char* dir)
 int cd(char* dir)
 {
     if (dir == NULL) {
-        strcpy(cwd, "/");
+        stack_clear(&cwd);
         return 0;
     }
     else if (strcmp(dir, "/") == 0)
     {
-        strcpy(cwd, "/");
+        stack_clear(&cwd);
     }
+
     else
     {
         int temp_fd = -1;
         nqp_dirent tmp = {0};
-        char* abs_path = relative_path_to_absolute(dir);
-         if ((temp_fd = nqp_open(abs_path)) > -1)
+
+        path_t* tmp_abs_path = relative_path_to_absolute(dir);
+         if ((temp_fd = nqp_open(stack_join( tmp_abs_path ))) > -1)
          {
              if (nqp_getdents(temp_fd, &tmp, 1) == -1)
              {
                  /* The path is a file */
-                 printf("cd: Is a file: %s \n", abs_path);
+                 printf("cd: Is a file: %s \n", stack_join( tmp_abs_path ));
                  nqp_close(temp_fd);
                  return -1;
              }
 
-             strcpy(cwd, abs_path);
-             if (cwd[strlen(cwd) - 1] != '/') strcat(cwd, "/");
+             memcpy(&cwd, tmp_abs_path, sizeof(path_t));
              nqp_close(temp_fd);
 
          }
          else
          {
-             printf("cd: Invalid Path: %s \n", abs_path);
+             printf("cd: Invalid Path: %s \n", stack_join( tmp_abs_path ));
              return -1;
          }
     }
@@ -244,11 +337,12 @@ int main( int argc, char *argv[], char *envp[] )
         exit( EXIT_FAILURE );
     }
 
-    strcpy(cwd, "/");
+    /* populate the cwd path */
+    cwd.top = -1;
 
     volume_label = nqp_vol_label( );
 
-    printf( "%s:\\ %s > ", volume_label, cwd );
+    printf( "%s:\\ %s > ", volume_label, stack_join(&cwd) );
     while ( fgets( line_buffer, MAX_LINE_SIZE, stdin ) != NULL )
     {
         line_buffer[strcspn(line_buffer, "\n")] = 0; /* Strip out the newline character from the fgets output */
@@ -267,9 +361,9 @@ int main( int argc, char *argv[], char *envp[] )
         }
         else
         {
-           char filepath[MAX_LINE_SIZE];
-           strcpy(filepath, cwd);
-           strcat(filepath, command[0]);
+           path_t* tmp_filepath_stack = relative_path_to_absolute(command[0]);
+           char* filepath = stack_join(tmp_filepath_stack);
+           free(tmp_filepath_stack);
            int child_pid = fork();
            if (child_pid == 0)
            {
@@ -291,7 +385,7 @@ int main( int argc, char *argv[], char *envp[] )
         printf("%s returned with error code: %d\n", command[0], err);
 
 
-        printf( "%s:\\ %s > ", volume_label, cwd );
+        printf( "%s:\\ %s > ", volume_label, stack_join(&cwd) );
         free(command);
     }
 

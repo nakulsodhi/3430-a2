@@ -3,12 +3,12 @@
 
 #define MAX_LINE_SIZE 256
 
-/* Current Working Directory Struct */
-typedef struct CURRENT_WORKING_DIRECTORY
-{
-    int fd;
-    char path[MAX_LINE_SIZE];
-} current_working_directory;
+
+typedef struct PATH_T {
+    char* stack[1024];
+    int top;
+} path_t;
+
 
 
 char* get_parent_path(char* path);
@@ -17,5 +17,5 @@ int pwd(void);
 int ls(char* dir);
 int cd(char* dir);
 
-char* relative_path_to_absolute(char* dir);
+path_t* relative_path_to_absolute(char* dir);
 #endif // NQP_SHELL_H_
