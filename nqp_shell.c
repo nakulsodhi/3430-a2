@@ -7,8 +7,11 @@
 #include <sys/wait.h>
 #include "nqp_shell.h"
 #include "nqp_io.h"
+#include <ctype.h>
 
 path_t cwd;
+
+
 
 char* stack_join(path_t* path)
 {
@@ -30,7 +33,7 @@ char* stack_join(path_t* path)
     for (int i = 0; i <= path->top; i++)
     {
         strcat(path_ret, path->stack[i]);
-        strcat(path_ret, "/");
+        if (i != path->top) strcat(path_ret, "/");
     }
 
     return path_ret;
@@ -56,15 +59,36 @@ char* path_join_parent(path_t* path)
     for (int i = 0; i <= path->top - 1; i++)
     {
         strcat(path_ret, path->stack[i]);
-        strcat(path_ret, "/");
+        if (i != path->top - 1) strcat(path_ret, "/");
     }
 
     return path_ret;
 }
 
+
+char* strip_whitespace(char * token)
+{
+    char *end;
+
+    // Trim leading space
+    while(isspace((unsigned char)*token)) token++;
+
+    // Trim trailing space
+    end = token + strlen(token) - 1;
+    while(end > token && isspace((unsigned char)*end)) end--;
+
+    // Write new null terminator character
+    end[1] = '\0';
+
+    return token;
+
+}
+
+
 void stack_push(path_t* path, char* token)
 {
     path->top++;
+    token = strip_whitespace(token);
     path->stack[path->top] = token;
 
 }
@@ -97,7 +121,7 @@ path_t* relative_path_to_absolute(char* dir){
             tmp->top = -1;
 
             int count = 0;
-            char** abs_path_tokens = split_str(dir, '/', &count);
+            char** abs_path_tokens = split_str(dir, "/", &count);
 
             for (int i = 0; i < count; i++)
             {
@@ -119,7 +143,7 @@ path_t* relative_path_to_absolute(char* dir){
         else                    /* Relative path */
         {
             int count = 0;
-            char** abs_path_tokens = split_str(dir, '/', &count);
+            char** abs_path_tokens = split_str(dir, "/", &count);
 
             path_t* tmp = malloc(sizeof(path_t));
             memcpy(tmp, &cwd, sizeof(path_t));
@@ -167,30 +191,29 @@ path_t* relative_path_to_absolute(char* dir){
 /*     return parent_path; */
 /* } */
 
-char** split_str(char* str, const char delim, int* len)
+char** split_str(const char* str, const char* delim, int* len)
 {
     char** ret = NULL;
-    char* tmp = str;
+    char* tmp = strdup(str);
     int str_idx = 0;
     int token_count = 0;
-    char* subtoken;
-    char* saveptr;
+    char* subtoken = NULL;
+    char* saveptr = NULL;
     *len = 0;
 
 
     /* Get the number of tokens. */
-    while (*tmp) {
-        if (delim == *tmp) {
+    while (*str) {
+        if (*delim == *str) {
             token_count++;
         }
-        tmp++;
+        str++;
     }
 
-    tmp = str; /* Reset the pointer to the start of the temp string */
     ret = calloc(token_count, sizeof (char*));
-    for (subtoken = strtok_r(tmp, &delim , &saveptr);
+    for (subtoken = strtok_r(tmp, delim , &saveptr);
          subtoken != NULL;
-         subtoken = strtok_r(NULL, &delim, &saveptr))
+         subtoken = strtok_r(NULL, delim, &saveptr))
     {
         *len = *len + 1;
         *(ret + str_idx++) = strdup(subtoken);
@@ -200,6 +223,21 @@ char** split_str(char* str, const char delim, int* len)
     free(subtoken);
 
     return ret;
+}
+
+char* join_str(const char** split, int len, const char* delim)
+{
+    int total_len = 0;
+    for (int i = 0; i < len; i++) total_len += 1 + strlen(split[i]);
+
+    char* joined = malloc(total_len * sizeof(char));
+    for (int i = 0; i < len; i++)
+    {
+        strcat(joined, split[i]);
+        if (i < len - 1) strcat(joined, delim);
+    }
+
+    return joined;
 }
 
 int pwd(void)
@@ -308,13 +346,85 @@ int cd(char* dir)
     return 0;
 }
 
+
+int launch_command(char* command, char *envp[])
+{
+    int err = 0;
+    /* int command_count = 0; */
+    /* char** pipeline_elements = split_str(command, "|", &command_count); */
+    /* for (int i = 0; i < command_count; i++) { */
+        /* pipeline_elements[i] = strip_whitespace(pipeline_elements[i]); */
+        int token_count = 0;
+        char temp;
+        /* char **command_tokenized = split_str(pipeline_elements[i], " ", &token_count); */
+        char **command_tokenized = split_str(command, " ", &token_count);
+        token_count = 0;
+        /* char **input_redirect_target = split_str(pipeline_elements[i], "<", &token_count); */
+        char **input_redirect_target = split_str(command, "<", &token_count);
+        char *filepath =
+            stack_join(relative_path_to_absolute(command_tokenized[0]));
+        int exec_fd = nqp_open(filepath);
+        if (exec_fd == NQP_FILE_NOT_FOUND) {
+            return NQP_FILE_NOT_FOUND;
+        }
+
+        int input_mfd = -1;
+        if (/* ( */token_count == 2/* )  *//* && (i == 0) */)
+        {
+            char *input_filepath =
+                stack_join(relative_path_to_absolute(input_redirect_target[1]));
+            int input_fd = nqp_open(input_filepath);
+            if (input_fd == -1)
+                return -1;
+            input_mfd = memfd_create(input_filepath, 0);
+            while (nqp_read(input_fd, &temp, 1) > 0) {
+                write(input_mfd, &temp, 1);
+            }
+            lseek(input_mfd, 0, SEEK_SET);
+        }
+        int mfd = memfd_create(command_tokenized[0], 0);
+        while (nqp_read(exec_fd, &temp, 1) > 0) {
+            write(mfd, &temp, 1);
+        }
+
+/*        int pipes[2];
+        if (i < command_count - 1)
+        {
+            int err = pipe(pipes);
+            if (err != 0) return err;
+        }
+*/
+        int child_pid = fork();
+        if (child_pid == 0)
+        {
+            if (/* ( */token_count == 2/* ) */ /* && (i == 0) */)
+            {
+                dup2(input_mfd, STDIN_FILENO);
+                command_tokenized[1] = NULL; /* Do not pass the arguments to the call
+                                                if there's input redirect */
+            };
+            
+            fexecve(mfd, &command_tokenized[0], envp);
+        /* } */
+
+        /* if (i < command_count -1) */
+        /* { */
+        /*     close(pipes[0]); */
+        /* } */
+    }
+
+    wait(NULL);
+
+    return err;
+}
+
 int main( int argc, char *argv[], char *envp[] )
 {
     char line_buffer[MAX_LINE_SIZE] = {0};
     char *volume_label = NULL;
     nqp_mount_error mount_error;
     int token_count = 0;
-    char** command;
+    char** command_tokenized;
     int err;
 
     (void) envp;
@@ -346,47 +456,32 @@ int main( int argc, char *argv[], char *envp[] )
     while ( fgets( line_buffer, MAX_LINE_SIZE, stdin ) != NULL )
     {
         line_buffer[strcspn(line_buffer, "\n")] = 0; /* Strip out the newline character from the fgets output */
-        command = split_str(line_buffer, ' ', &token_count);
-        if (strcmp(command[0], "cd") == 0)
+        char command[MAX_LINE_SIZE];
+        strcpy(command, line_buffer);
+        command_tokenized = split_str(command, " ", &token_count);
+        if (strcmp(command_tokenized[0], "cd") == 0)
         {
-            err = cd((token_count > 1) ? command [1] : NULL);
+            err = cd((token_count > 1) ? command_tokenized [1] : NULL);
         }
-        else if (strcmp(command[0], "pwd") == 0)
+        else if (strcmp(command_tokenized[0], "pwd") == 0)
         {
             err = pwd();
         }
-        else if (strcmp(command[0], "ls") == 0)
+        else if (strcmp(command_tokenized[0], "ls") == 0)
         {
-            err = ls( (token_count > 1) ? command[1] : NULL);
+            err = ls( (token_count > 1) ? command_tokenized[1] : NULL);
         }
         else
         {
-           path_t* tmp_filepath_stack = relative_path_to_absolute(command[0]);
-           char* filepath = stack_join(tmp_filepath_stack);
-           free(tmp_filepath_stack);
-           int child_pid = fork();
-           if (child_pid == 0)
-           {
-               int exec_fd = nqp_open(filepath);
-               char temp;
-               int mfd = memfd_create(command[0], 0);
-               while (nqp_read(exec_fd, &temp, 1) > 0) {
-                   write(mfd, &temp, 1);
-               }
-               fexecve(mfd, &command[0], envp);
-           }
-
-           wait(NULL);
+            err = launch_command(command, envp);
 
         }
 
-
-
-        printf("%s returned with error code: %d\n", command[0], err);
+        printf("%s returned with error code: %d\n", command_tokenized[0], err);
 
 
         printf( "%s:\\ %s > ", volume_label, stack_join(&cwd) );
-        free(command);
+        free(command_tokenized);
     }
 
     return EXIT_SUCCESS;

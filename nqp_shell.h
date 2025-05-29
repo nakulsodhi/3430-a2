@@ -12,7 +12,7 @@ typedef struct PATH_T {
 
 
 char* get_parent_path(char* path);
-char** split_str(char* str, const char delim, int* len);
+char** split_str(const char* str, const char* delim, int* len);
 int pwd(void);
 int ls(char* dir);
 int cd(char* dir);
