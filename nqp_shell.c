@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include "nqp_shell.h"
@@ -11,7 +12,6 @@
 #include <stdbool.h>
 
 path_t cwd;
-
 
 
 char* stack_join(path_t* path)
@@ -159,39 +159,6 @@ path_t* relative_path_to_absolute(char* dir){
         }
 }
 
-
-
-/* char* get_parent_path(char* path) */
-/* { */
-/*     if (strcmp(path, "/") == 0) { */
-/*         return path; */
-/*     } */
-
-/*     int depth = 0; */
-
-/*     if (depth == 1)             /\* The parent is root *\/ */
-/*     { */
-/*         return "/"; */
-
-/*     } */
-/*     int path_length = depth * sizeof(char); */
-/*     for (int i = 0; i < depth - 1; i++) */
-/*     { */
-/*         path_length += strlen(stack[i]); */
-
-/*     } */
-/*     char* parent_path = calloc(path_length, sizeof(char)); */
-/*     int idx = 0; */
-/*     for (int i = 0; i < depth - 1; i++) */
-/*     { */
-/*         strcpy((parent_path + idx++), "/"); */
-/*         strcpy((parent_path + idx), cwd_split[i]); */
-/*         idx += strlen(cwd_split[i]); */
-/*     } */
-
-
-/*     return parent_path; */
-/* } */
 
 char** split_str(const char* str, const char* delim, int* len)
 {
@@ -481,73 +448,6 @@ int launch_command(char* command, char *envp[])
     return err;
 }
 
-    /* char **command_tokenized = split_str(pipeline_elements[0], " ", &command_arg_count); */
-    /* char *filepath = */
-    /*     stack_join(relative_path_to_absolute(command_tokenized[0])); */
-    /* int exec_fd = nqp_open(filepath); */
-    /* if (exec_fd == NQP_FILE_NOT_FOUND) { */
-    /*     return NQP_FILE_NOT_FOUND; */
-    /* } */
-
-    /* int input_mfd = -1; */
-    /* if ( ( token_count == 2 ) && input_redirect_allowed ) /\* there might be input redirection *\/ */
-    /* { */
-    /*     char *input_filepath = */
-    /*         stack_join(relative_path_to_absolute(input_redirect_target[1])); */
-    /*     int input_fd = nqp_open(input_filepath); */
-    /*     if (input_fd == -1) */
-    /*         return -1; */
-    /*     input_mfd = memfd_create(input_filepath, 0); */
-    /*     while (nqp_read(input_fd, &temp, 1) > 0) { */
-    /*         write(input_mfd, &temp, 1); */
-    /*     } */
-    /*     lseek(input_mfd, 0, SEEK_SET); */
-    /* } */
-    /* int mfd = memfd_create("command", 0); */
-    /* while (nqp_read(exec_fd, &temp, 1) > 0) { */
-    /*     write(mfd, &temp, 1); */
-    /* } */
-    /* int child_pid = fork(); */
-    /* if (child_pid == 0) */
-    /* { */
-    /*     if ((token_count == 2 ) && input_redirect_allowed) /\* We do Input Redirection in these parts, pardner *\/ */
-    /*     { */
-    /*         dup2(input_mfd, STDIN_FILENO); */
-    /*         for (int i = 0; i < command_arg_count; i++) */
-    /*         { */
-    /*             if (strcmp(command_tokenized[i], "<") == 0) */
-    /*             { */
-    /*                 command_tokenized[i] = NULL; */
-    /*                 break; */
-    /*             } */
-    /*         } */
-    /*         /\* Do not pass the arguments to the call */
-    /*                                         if there's input redirect *\/ */
-    /*     }; */
-    /*     /\* } *\/ */
-
-    /*     if (command_count > 1) /\* There's another pipeline after this *\/ */
-    /*     { */
-    /*         int grandchild_pipe[2] = {0}; */
-    /*         pipe(grandchild_pipe); */
-    /*         close(grandchild_pipe[0]); /\* Close the read end of the pipe for the child *\/ */
-    /*         dup2(grandchild_pipe[1], STDOUT_FILENO); */
-    /*         int grandchild_pid = fork(); */
-    /*         if (grandchild_pid == 0) */
-    /*         { */
-    /*             close(grandchild_pipe[1]); /\* Close the write end for the grandchild *\/ */
-    /*             dup2(grandchild_pipe[0], STDIN_FILENO); */
-    /*             launch_command(command + strlen(pipeline_elements[0]) + 1, false, envp); */
-    /*         } */
-
-    /*     } */
-    /*     else */
-    /*     { */
-    /*     } */
-    /*     /\* printf("trying to exec: %s and %s\n", command_tokenized[0], command_tokenized[1]); *\/ */
-    /*     fexecve(mfd, &command_tokenized[0], envp); */
-
-    /* } */
 
 
 
@@ -561,9 +461,11 @@ int main( int argc, char *argv[], char *envp[] )
     char** command_tokenized;
     int err;
 
+
+
     (void) envp;
 
-    if ( argc != 2 )
+    if ( argc < 2 )
     {
         fprintf( stderr, "Usage: ./nqp_shell volume.img\n" );
         exit( EXIT_FAILURE );
@@ -611,12 +513,13 @@ int main( int argc, char *argv[], char *envp[] )
 
         }
 
-        printf("%s returned with error code: %d\n", command_tokenized[0], err);
+        /* printf("%s returned with error code: %d\n", command_tokenized[0], err); */
 
 
         printf( "%s:\\ %s > ", volume_label, stack_join(&cwd) );
         free(command_tokenized);
     }
 
+        (void) err;
     return EXIT_SUCCESS;
 }
