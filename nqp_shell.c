@@ -8,6 +8,7 @@
 #include "nqp_shell.h"
 #include "nqp_io.h"
 #include <ctype.h>
+#include <stdbool.h>
 
 path_t cwd;
 
@@ -80,6 +81,7 @@ char* strip_whitespace(char * token)
     // Write new null terminator character
     end[1] = '\0';
 
+    /* printf("whitespace stripped:%s\n", token); */
     return token;
 
 }
@@ -196,7 +198,7 @@ char** split_str(const char* str, const char* delim, int* len)
     char** ret = NULL;
     char* tmp = strdup(str);
     int str_idx = 0;
-    int token_count = 0;
+    int token_count = 1;
     char* subtoken = NULL;
     char* saveptr = NULL;
     *len = 0;
@@ -209,34 +211,37 @@ char** split_str(const char* str, const char* delim, int* len)
         }
         str++;
     }
+    /* printf("token count:%d\n", token_count); */
 
-    ret = calloc(token_count, sizeof (char*));
+    ret = calloc(token_count + 1, sizeof(char*)); /* Plus one for a null item */
     for (subtoken = strtok_r(tmp, delim , &saveptr);
          subtoken != NULL;
          subtoken = strtok_r(NULL, delim, &saveptr))
     {
         *len = *len + 1;
         *(ret + str_idx++) = strdup(subtoken);
+        /* printf("subtoken:%s\n", subtoken); */
 
     }
+    *(ret + str_idx) = NULL; /* Null terminate the string array */
 
-    free(subtoken);
 
     return ret;
 }
 
-char* join_str(const char** split, int len, const char* delim)
+char* join_str(char** split, int from, int len, const char* delim)
 {
     int total_len = 0;
-    for (int i = 0; i < len; i++) total_len += 1 + strlen(split[i]);
+    for (int i = from; i < len; i++) total_len += 1 + strlen(split[i]);
 
     char* joined = malloc(total_len * sizeof(char));
-    for (int i = 0; i < len; i++)
+    for (int i = from; i < len; i++)
     {
         strcat(joined, split[i]);
         if (i < len - 1) strcat(joined, delim);
     }
 
+    /* printf("joined:%s\n", joined); */
     return joined;
 }
 
@@ -350,73 +355,202 @@ int cd(char* dir)
 int launch_command(char* command, char *envp[])
 {
     int err = 0;
-    /* int command_count = 0; */
-    /* char** pipeline_elements = split_str(command, "|", &command_count); */
-    /* for (int i = 0; i < command_count; i++) { */
-        /* pipeline_elements[i] = strip_whitespace(pipeline_elements[i]); */
-        int token_count = 0;
-        char temp;
-        /* char **command_tokenized = split_str(pipeline_elements[i], " ", &token_count); */
-        char **command_tokenized = split_str(command, " ", &token_count);
-        token_count = 0;
-        /* char **input_redirect_target = split_str(pipeline_elements[i], "<", &token_count); */
-        char **input_redirect_target = split_str(command, "<", &token_count);
-        char *filepath =
-            stack_join(relative_path_to_absolute(command_tokenized[0]));
-        int exec_fd = nqp_open(filepath);
-        if (exec_fd == NQP_FILE_NOT_FOUND) {
-            return NQP_FILE_NOT_FOUND;
-        }
-
-        int input_mfd = -1;
-        if (/* ( */token_count == 2/* )  *//* && (i == 0) */)
+    int command_count = 0;
+    command = strip_whitespace(command);
+    char** pipeline_elements = split_str(command, "|", &command_count);
+    int pipe_cur[2] = {-1};
+    int pipe_prev[2] = {-1};
+    int command_arg_count = 0;
+    int token_count = 0;
+    char temp;
+    for (int i = 0; i < command_count; i++)
+    {
+        if (i == 0) // the first command in the pipeline
         {
-            char *input_filepath =
-                stack_join(relative_path_to_absolute(input_redirect_target[1]));
-            int input_fd = nqp_open(input_filepath);
-            if (input_fd == -1)
-                return -1;
-            input_mfd = memfd_create(input_filepath, 0);
-            while (nqp_read(input_fd, &temp, 1) > 0) {
-                write(input_mfd, &temp, 1);
+            char **input_redirect_target = split_str(pipeline_elements[i], "<", &token_count);
+            char **command_tokenized = split_str(pipeline_elements[i], " ", &command_arg_count);
+            char *filepath = stack_join(relative_path_to_absolute(command_tokenized[0]));
+            int exec_fd = nqp_open(filepath);
+            if (exec_fd == NQP_FILE_NOT_FOUND) {
+                return NQP_FILE_NOT_FOUND;
             }
-            lseek(input_mfd, 0, SEEK_SET);
-        }
-        int mfd = memfd_create(command_tokenized[0], 0);
-        while (nqp_read(exec_fd, &temp, 1) > 0) {
-            write(mfd, &temp, 1);
-        }
-
-/*        int pipes[2];
-        if (i < command_count - 1)
-        {
-            int err = pipe(pipes);
-            if (err != 0) return err;
-        }
-*/
-        int child_pid = fork();
-        if (child_pid == 0)
-        {
-            if (/* ( */token_count == 2/* ) */ /* && (i == 0) */)
+            int mfd = memfd_create("command", 0);
+            while (nqp_read(exec_fd, &temp, 1) > 0) {
+                write(mfd, &temp, 1);
+            }
+            int input_mfd = -1;
+            if  ( token_count == 2 ) /* there might be input redirection */
             {
-                dup2(input_mfd, STDIN_FILENO);
-                command_tokenized[1] = NULL; /* Do not pass the arguments to the call
-                                                if there's input redirect */
-            };
-            
-            fexecve(mfd, &command_tokenized[0], envp);
-        /* } */
+                char *input_filepath =
+                    stack_join(relative_path_to_absolute(input_redirect_target[1]));
+                int input_fd = nqp_open(input_filepath);
+                if (input_fd == -1)
+                    return -1;
+                input_mfd = memfd_create(input_filepath, 0);
+                while (nqp_read(input_fd, &temp, 1) > 0) {
+                    write(input_mfd, &temp, 1);
+                }
+                lseek(input_mfd, 0, SEEK_SET);
+            }
+            if (command_count > 1)
+            {
+                pipe(pipe_prev);
+            }
 
-        /* if (i < command_count -1) */
-        /* { */
-        /*     close(pipes[0]); */
-        /* } */
+            int child_pid = fork();
+            if (child_pid == 0)
+            {
+                if (command_count > 1)
+                {
+                    close(pipe_prev[0]);
+                    dup2(pipe_prev[1], STDOUT_FILENO);
+                }
+                if (token_count == 2 ) /* We do Input Redirection in these parts, pardner */
+                {
+                    dup2(input_mfd, STDIN_FILENO);
+                    for (int i = 0; i < command_arg_count; i++)
+                    {
+                        if (strcmp(command_tokenized[i], "<") == 0)
+                        {
+                            command_tokenized[i] = NULL;
+                            break;
+                        }
+                    }
+
+                }
+
+                fexecve(mfd, &command_tokenized[0], envp);
+            }
+        }
+        else if (i == command_count - 1) //the last command in the pipeline
+        {
+            char **command_tokenized = split_str(pipeline_elements[i], " ", &command_arg_count);
+            char *filepath = stack_join(relative_path_to_absolute(command_tokenized[0]));
+            int exec_fd = nqp_open(filepath);
+            if (exec_fd == NQP_FILE_NOT_FOUND) {
+                return NQP_FILE_NOT_FOUND;
+            }
+            int mfd = memfd_create("command", 0);
+            while (nqp_read(exec_fd, &temp, 1) > 0) {
+                write(mfd, &temp, 1);
+            }
+            int child_pid = fork();
+            if (child_pid == 0)
+            {
+                close(pipe_prev[1]);
+                dup2(pipe_prev[0], STDIN_FILENO);
+                fexecve(mfd, &command_tokenized[0], envp);
+            }
+
+            close(pipe_prev[0]);
+            close(pipe_prev[1]);
+
+        }
+        else
+        {
+            char **command_tokenized = split_str(pipeline_elements[i], " ", &command_arg_count);
+            char *filepath = stack_join(relative_path_to_absolute(command_tokenized[0]));
+            int exec_fd = nqp_open(filepath);
+            if (exec_fd == NQP_FILE_NOT_FOUND) {
+                return NQP_FILE_NOT_FOUND;
+            }
+            int mfd = memfd_create("command", 0);
+            while (nqp_read(exec_fd, &temp, 1) > 0) {
+                write(mfd, &temp, 1);
+            }
+
+            pipe(pipe_cur);
+
+            int child_pid = fork();
+            if (child_pid == 0)
+            {
+                close(pipe_prev[1]);
+                dup2(pipe_prev[0], STDIN_FILENO);
+                close(pipe_cur[0]);
+                dup2(pipe_cur[1], STDOUT_FILENO);
+                fexecve(mfd, &command_tokenized[0], envp);
+            }
+
+            close(pipe_prev[0]);
+            close(pipe_prev[1]);
+            memcpy(pipe_prev, pipe_cur, sizeof(int) * 2);
+
+        }
+        wait(NULL);
     }
-
-    wait(NULL);
-
     return err;
 }
+
+    /* char **command_tokenized = split_str(pipeline_elements[0], " ", &command_arg_count); */
+    /* char *filepath = */
+    /*     stack_join(relative_path_to_absolute(command_tokenized[0])); */
+    /* int exec_fd = nqp_open(filepath); */
+    /* if (exec_fd == NQP_FILE_NOT_FOUND) { */
+    /*     return NQP_FILE_NOT_FOUND; */
+    /* } */
+
+    /* int input_mfd = -1; */
+    /* if ( ( token_count == 2 ) && input_redirect_allowed ) /\* there might be input redirection *\/ */
+    /* { */
+    /*     char *input_filepath = */
+    /*         stack_join(relative_path_to_absolute(input_redirect_target[1])); */
+    /*     int input_fd = nqp_open(input_filepath); */
+    /*     if (input_fd == -1) */
+    /*         return -1; */
+    /*     input_mfd = memfd_create(input_filepath, 0); */
+    /*     while (nqp_read(input_fd, &temp, 1) > 0) { */
+    /*         write(input_mfd, &temp, 1); */
+    /*     } */
+    /*     lseek(input_mfd, 0, SEEK_SET); */
+    /* } */
+    /* int mfd = memfd_create("command", 0); */
+    /* while (nqp_read(exec_fd, &temp, 1) > 0) { */
+    /*     write(mfd, &temp, 1); */
+    /* } */
+    /* int child_pid = fork(); */
+    /* if (child_pid == 0) */
+    /* { */
+    /*     if ((token_count == 2 ) && input_redirect_allowed) /\* We do Input Redirection in these parts, pardner *\/ */
+    /*     { */
+    /*         dup2(input_mfd, STDIN_FILENO); */
+    /*         for (int i = 0; i < command_arg_count; i++) */
+    /*         { */
+    /*             if (strcmp(command_tokenized[i], "<") == 0) */
+    /*             { */
+    /*                 command_tokenized[i] = NULL; */
+    /*                 break; */
+    /*             } */
+    /*         } */
+    /*         /\* Do not pass the arguments to the call */
+    /*                                         if there's input redirect *\/ */
+    /*     }; */
+    /*     /\* } *\/ */
+
+    /*     if (command_count > 1) /\* There's another pipeline after this *\/ */
+    /*     { */
+    /*         int grandchild_pipe[2] = {0}; */
+    /*         pipe(grandchild_pipe); */
+    /*         close(grandchild_pipe[0]); /\* Close the read end of the pipe for the child *\/ */
+    /*         dup2(grandchild_pipe[1], STDOUT_FILENO); */
+    /*         int grandchild_pid = fork(); */
+    /*         if (grandchild_pid == 0) */
+    /*         { */
+    /*             close(grandchild_pipe[1]); /\* Close the write end for the grandchild *\/ */
+    /*             dup2(grandchild_pipe[0], STDIN_FILENO); */
+    /*             launch_command(command + strlen(pipeline_elements[0]) + 1, false, envp); */
+    /*         } */
+
+    /*     } */
+    /*     else */
+    /*     { */
+    /*     } */
+    /*     /\* printf("trying to exec: %s and %s\n", command_tokenized[0], command_tokenized[1]); *\/ */
+    /*     fexecve(mfd, &command_tokenized[0], envp); */
+
+    /* } */
+
+
+
 
 int main( int argc, char *argv[], char *envp[] )
 {
